@@ -27,124 +27,203 @@ bool isStop = false;
 vector<int> clientsSockets;
 int curClientsNum = 0;
  
-void SendMessageToOtherClients(int clientSocket, char* message)
-{
-   for (int i = 0; i < curClientsNum; i++) 
-   {
-      if (clientsSockets[i] != clientSocket) 
-      {
-         send(clientsSockets[i], (const char *)message, strlen(message), 0);
-      }
-   }     
-}
 
-int FindClientIndex(int socket)
+class ConnectionManager 
 {
-   for (int i = curClientsNum - 1; i >= 0; i--) {
-      if (clientsSockets[i] == socket) {
-         return i;
+
+   void SendMessageToOtherClients(int clientSocket, char* message)
+   {
+      for (int i = 0; i < curClientsNum; i++) 
+      {
+         if (clientsSockets[i] != clientSocket) 
+         {
+            send(clientsSockets[i], (const char *)message, strlen(message), 0);
+         }
+      }     
+   }
+
+   int FindClientIndex(int socket)
+   {
+      for (int i = curClientsNum - 1; i >= 0; i--) {
+         if (clientsSockets[i] == socket) {
+            return i;
+         }
       }
    }
-}
-void* Client(void* args)
-{
-   int newSocket = *((int*)args);
-   bool isExit = false;
-   char buffer[BUFSIZE];
-   int indexInVec = FindClientIndex(newSocket);
-   while(!isExit) {
-      int lastIndex = recv(newSocket, (char *)buffer, BUFSIZE, 0);
-      buffer[lastIndex] = '\0';
+
+   void Client(int socket)
+   {
+      int newSocket = socket;
+      bool isExit = false;
+      char buffer[BUFSIZE];
+      int indexInVec = FindClientIndex(newSocket);
+      while(!isExit) {
+         int lastIndex = recv(newSocket, (char *)buffer, BUFSIZE, 0);
+         buffer[lastIndex] = '\0';
  
-      sem_wait(&output);     
-      cout << buffer << "\n";
-      sem_post(&output);
-
-      SendMessageToOtherClients(newSocket, buffer);
-      
-      string message = string(buffer);
-      if (message.find("User has exit!") != -1)
-      {
-         isExit = true;
-         clientsSockets.erase(clientsSockets.begin() + indexInVec);
-         curClientsNum--;
-      }    
-   }
-   pthread_exit(NULL);
-}
-
-void* Input(void* args) 
-{
-   string input;
-   bool isExit;
-   while(!isExit) 
-   {
-      getline(cin, input);
-      if (input.compare("/stop") == 0)
-      {
-         sem_wait(&output);
-         cout << "Server has stopped\n";
+         sem_wait(&output);     
+         cout << buffer << "\n";
          sem_post(&output);
-         isStop = true;
-         isExit = true;
-      }
-   }
-   pthread_exit(NULL);
-}
 
-int main ()
+         SendMessageToOtherClients(newSocket, buffer);
+      
+         string message = string(buffer);
+         if (message.find("User has exit!") != -1)
+         {
+            isExit = true;
+            clientsSockets.erase(clientsSockets.begin() + indexInVec);
+            curClientsNum--;
+         }    
+      }
+      pthread_exit(NULL);
+   }
+   void ManagerRoutine()
+   {
+   
+   }
+public:
+   ConnectionManager()
+   {
+      ConnectionManager tempObj;     
+      thread manager(&tempObj::ManagerRoutine, &tempObj);
+   }
+};
+class ClientsConnectionsHandler 
 {
+
    int  server, newSocket;  
 
    struct sockaddr_in serverAddr;
    struct sockaddr_storage serverStorage;
    
+   void HandlerRoutine() 
+   {
+      
+      while (!isStop)
+      {
+         addr_size = sizeof(serverStorage);
+   
+         newSocket = accept(server, (struct sockaddr*)&serverStorage, &addr_size);   
+      
+         clientsSockets.push_back(newSocket);
+         curClientsNum++;
+     
+         pthread_create(&clientsThreads[i++], NULL, Client, &newSocket);
+         if (i >= MAXCLIENTS) {
+            i = 0;
+            while (i < MAXCLIENTS) {
+               pthread_join(clientsThreads[i++], NULL);
+            }
+            i = 0;
+         }
+      }
+      close(server);
+   }
+public:
+   ClientsConnectionsHandler()
+   {
+   
+      server = socket(AF_INET, SOCK_STREAM, 0);
+
+      if (server < 0)
+      {
+         cout << "\nError establishing socket...\n";
+         exit(EXIT_FAILURE);
+      }
+
+      serverAddr.sin_family = AF_INET;
+      serverAddr.sin_addr.s_addr = INADDR_ANY;
+      serverAddr.sin_port = htons(PORT);
+
+      if ((bind(server, (struct sockaddr*)&serverAddr, sizeof(serverAddr))) < 0)
+      {
+         cout << "Error binding connection, the socket has already been established...\n";  
+         return -1;
+      }
+      if (listen(server, MAXCLIENTS) == 0)
+         cout << "Listening\n";
+      else
+         cout << "Error\n";
+      //Vstavit' conditions variable     
+      ClientsConnectionsHandler tempObj;
+      thread handler(&tempObj::HandlerRoutine, &tempObj);
+   }
+};
+
+class IncomigMessagesHandler
+{
+   bool IsItCommand(string commandName)
+   {
+      return commandName[0] == '/'; 
+   }
+
+   void HandlerRoutine()
+   {
+      
+   }
+public:
+   IncomingMessagesHandler()
+   {
+      IncomingMessagesHandler tempObj;
+      thread handler = (&tempObj::HandlerRoutine, &tempObj);
+   }
+};
+
+class MessagesBroker
+{
+
+public:
+   SendMessage(Message msg)
+   {
+
+   }
+};
+
+class CommandsHandler
+{
+
+   void HandlerRoutine()
+   {
+      
+   }
+public:
+   CommandsHandler()
+   {
+      CommandsHandler tempObj;
+      thread handler(&tempObj::HandlerRoutine, &tempObj);
+   }
+};
+
+class InputHandler
+{
+
+   void Input() 
+   {
+      string input;
+      while(!isStop) 
+      {
+         getline(cin, input);
+         if (input.compare("/stop") == 0)
+         {
+            sem_wait(&output);
+            cout << "Server has stopped\n";
+            sem_post(&output);
+            isStop = true;
+         }
+      }
+   }
+
+public:
+   InputHandler()
+   {
+      Input();
+   }
+};
+int main ()
+{
+   
    socklen_t addr_size;
    sem_init(&output, 0, 1);
    
-   server = socket(AF_INET, SOCK_STREAM, 0);
-
-   if (server < 0)
-   {
-      cout << "\nError establishing socket...\n";
-      exit(EXIT_FAILURE);
-   }
-
-   serverAddr.sin_family = AF_INET;
-   serverAddr.sin_addr.s_addr = INADDR_ANY;
-   serverAddr.sin_port = htons(PORT);
-
-   if ((bind(server, (struct sockaddr*)&serverAddr, sizeof(serverAddr))) < 0)
-   {
-      cout << "Error binding connection, the socket has already been established...\n";  
-      return -1;
-   }
-   if (listen(server, MAXCLIENTS) == 0)
-      cout << "Listening\n";
-   else
-      cout << "Error\n";
-  
-   int i = 0; 
-   pthread_t inputListener;
-   pthread_create(&inputListener, NULL, Input, (void*)0);  
-   while (!isStop)
-   {
-      addr_size = sizeof(serverStorage);
-   
-      newSocket = accept(server, (struct sockaddr*)&serverStorage, &addr_size);   
-      
-      clientsSockets.push_back(newSocket);
-      curClientsNum++;
-     
-      pthread_create(&clientsThreads[i++], NULL, Client, &newSocket);
-      if (i >= MAXCLIENTS) {
-         i = 0;
-         while (i < MAXCLIENTS) {
-            pthread_join(clientsThreads[i++], NULL);
-         }
-         i = 0;
-      }
-   }
-   close(server);
    return 0;
 }  
