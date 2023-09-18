@@ -1,7 +1,7 @@
 #include <sys/types.h>
 #include <iostream>
 #include <netinet/in.h>
-#include <bits/stdc++.h>
+//#include <bits/stdc++.h>
 #include <string>
 
 #include <string.h>
@@ -56,10 +56,8 @@ class ConnectionsManager
       return connectionStatus;
    }
 
-   void ClientThread(char* name="Default")
+   void ClientThread()
    {  
-      string username = name; 
-   
       if (EstablishTheConnection() < 0)
       {
          cout << "An error occurred during the attempt to establish the connection\n";
@@ -70,10 +68,7 @@ class ConnectionsManager
       {
          if(isMessage && !isExit)
          {
-            string message;
-            message.clear();
-            message = username + ": " + inputStr;    
-            send(networkSocket, message.c_str(), message.length(),0);
+            send(networkSocket, inputStr.c_str(), inputStr.length(),0);
             isMessage = false;
          } else {
             this_thread::sleep_for(chrono::milliseconds(2000));
@@ -87,8 +82,8 @@ public:
    ConnectionsManager()
    {
       ConnectionsManager tempObj;
-      thread reciver(&tempObj::MessagesListenet, &tempObj);
-      thread client(&tempObj::ClientThread, &tempObj);
+      thread reciver(&ConnectionsManager::MessagesListener, &tempObj);
+      thread client(&ConnectionsManager::ClientThread, &tempObj);
    }
 };
 
@@ -142,7 +137,7 @@ public:
    CommandsHandler()
    {
       CommandsHandler tempObj;
-      thread handler(&tempObj::CommandsHandlerRoutine, &tempObj);
+      thread handler(&CommandsHandler::CommandsHandlerRoutine, &tempObj);
    }   
 };
 

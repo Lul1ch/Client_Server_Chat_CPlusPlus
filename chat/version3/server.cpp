@@ -27,6 +27,27 @@ bool isStop = false;
 vector<int> clientsSockets;
 int curClientsNum = 0;
  
+class Message
+{
+int authorSocket;
+string message;
+public:
+   string GetMessage()
+   {
+      return message;
+   }
+
+   int GetAuthorSocket()
+   {
+      return authorSocket;
+   }
+
+   Message(int authorSocket, string message)
+   {
+      this->authorSocket = authorSocket;
+      this->message = message;
+   }
+};
 
 class ConnectionManager 
 {
@@ -61,19 +82,9 @@ class ConnectionManager
          int lastIndex = recv(newSocket, (char *)buffer, BUFSIZE, 0);
          buffer[lastIndex] = '\0';
  
-         sem_wait(&output);     
-         cout << buffer << "\n";
-         sem_post(&output);
 
          SendMessageToOtherClients(newSocket, buffer);
       
-         string message = string(buffer);
-         if (message.find("User has exit!") != -1)
-         {
-            isExit = true;
-            clientsSockets.erase(clientsSockets.begin() + indexInVec);
-            curClientsNum--;
-         }    
       }
       pthread_exit(NULL);
    }
@@ -82,10 +93,10 @@ class ConnectionManager
    
    }
 public:
-   ConnectionManager()
+   ConnectionManager(int socketNum)
    {
       ConnectionManager tempObj;     
-      thread manager(&tempObj::ManagerRoutine, &tempObj);
+      thread manager(&tempObj::Client, &tempObj, socketNum);
    }
 };
 class ClientsConnectionsHandler 
@@ -157,15 +168,18 @@ class IncomigMessagesHandler
       return commandName[0] == '/'; 
    }
 
-   void HandlerRoutine()
-   {
-      
-   }
 public:
-   IncomingMessagesHandler()
+   void ReciveIncomingMessage(Message message)
    {
-      IncomingMessagesHandler tempObj;
-      thread handler = (&tempObj::HandlerRoutine, &tempObj);
+      if (IsItCommand(message.GetMessage()))
+      {
+      
+      } else {
+         sem_wait(&output);     
+         cout << message.GetMessage() << "\n";
+         sem_post(&output);
+         //запрос на рассылку
+      }        
    }
 };
 
@@ -181,10 +195,34 @@ public:
 
 class CommandsHandler
 {
-
+   void AnalyzeCommand(Message commandName)
+   {
+      switch(commandName)
+      {
+         case "/exit":
+   
+            break;
+         default:
+            //Запрос на рассылку сообщения о том, что команда не распознана
+      }  
+   }
+   
    void HandlerRoutine()
    {
-      
+      while(!isStop) 
+      {
+         if (true)
+         { 
+            AnalyzeCommand();
+            string message = string(buffer);
+            if (message.find("User has exit!") != -1)
+            {
+               isExit = true;
+               clientsSockets.erase(clientsSockets.begin() + indexInVec);
+               curClientsNum--;
+            }
+         }    
+      }   
    }
 public:
    CommandsHandler()
