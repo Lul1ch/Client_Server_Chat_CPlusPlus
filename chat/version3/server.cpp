@@ -7,26 +7,23 @@
 #include <sys/socket.h>
 
 #include <stdio.h>
-#include <pthread.h>
-#include <semaphore.h>
 
 #include <vector>
 #include <string>
 #include <netinet/in.h>
 
+#include <thread>
+#include <mutex>
+#include "output.h"
 using namespace std;
 
 #define PORT 1504
 #define BUFSIZE 1024
 #define MAXCLIENTS 50
 
-sem_t output;
-pthread_t clientsThreads[MAXCLIENTS*2];
-int clientsCount = 0;
 bool isStop = false;
-vector<int> clientsSockets;
-int curClientsNum = 0;
- 
+OutputHandler outputHandler;
+
 class Message
 {
 int authorSocket;
@@ -41,64 +38,127 @@ public:
    {
       return authorSocket;
    }
+   
+   Message()
+   {
+      this->authorSocket = -1;
+      this->message = "Hi!";
+   }
 
    Message(int authorSocket, string message)
    {
       this->authorSocket = authorSocket;
       this->message = message;
    }
+
+   Message& operator=(Message& msg)
+   { 
+      this->authorSocket = msg.GetAuthorSocket();
+      this->message = msg.GetMessage();
+      return *this;
+   }
+};
+
+class MessagesBroker;
+class ConnectionManager;
+
+class ClientsCommandsHandler
+{
+public:
+
+   void AnalyzeCommand(Message* command,  MessagesBroker* msgsBroker, ConnectionManager* manager)
+   {  
+      string commandStr = command->GetMessage();
+      string commandName = commandStr.substr(0, commandStr.find(" "));  
+      if(commandName == "/exit")
+      {
+         //TODO вставить рассылку сообщения об отключении клиента
+         manager->IsExit();
+         outputHandler.PrintMessage(string("User " + to_string(command->GetAuthorSocket()) + " logged out!"));        
+      } else {
+     
+      }
+   }
+};
+
+class ServerCommandsHandler
+{
+public:
+   void AnalyzeCommand(string command, MessagesBroker* msgsBroker)
+   {   
+      string commandName = command.substr(0, command.find(" "));  
+      if(commandName == "/stop")
+      {
+         //TODO дописать логику, при которой будут останавливаться все текущие клиентские потоки, и будет отправляться сообщение об этом клиентам.         
+         isStop = true;
+      } else {
+   
+      }
+   }
+};
+
+class IncomingMessagesHandler
+{  
+   bool IsItCommand(string commandName)
+   {
+      return commandName[0] == '/'; 
+   }
+
+public:
+   void ReciveIncomingMessage(Message* message, MessagesBroker* msgsBroker, ConnectionManager* manager)
+   {
+      if (IsItCommand(message->GetMessage()))
+      {
+         ClientsCommandsHandler handler;
+         handler.AnalyzeCommand(message, msgsBroker, manager);           
+      } else {
+         outputHandler.PrintMessage(message->GetMessage());
+         msgsBroker->IsMessageToSend();
+      }        
+   }
 };
 
 class ConnectionManager 
 {
-
-   void SendMessageToOtherClients(int clientSocket, char* message)
-   {
-      for (int i = 0; i < curClientsNum; i++) 
-      {
-         if (clientsSockets[i] != clientSocket) 
-         {
-            send(clientsSockets[i], (const char *)message, strlen(message), 0);
-         }
-      }     
-   }
-
-   int FindClientIndex(int socket)
-   {
-      for (int i = curClientsNum - 1; i >= 0; i--) {
-         if (clientsSockets[i] == socket) {
-            return i;
-         }
-      }
-   }
+int clientSocket;
+IncomingMessagesHandler incMsgsHandler;
+MessagesBroker* msgsBroker;
+bool isExit = false;
 
    void Client(int socket)
    {
-      int newSocket = socket;
-      bool isExit = false;
+      clientSocket = socket;
       char buffer[BUFSIZE];
-      int indexInVec = FindClientIndex(newSocket);
-      while(!isExit) {
-         int lastIndex = recv(newSocket, (char *)buffer, BUFSIZE, 0);
-         buffer[lastIndex] = '\0';
- 
 
-         SendMessageToOtherClients(newSocket, buffer);
-      
+      while(!isExit) {
+         int lastIndex = recv(clientSocket, (char *)buffer, BUFSIZE, 0);
+         buffer[lastIndex] = '\0';
+         incMsgsHandler.ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker, this);          
       }
-      pthread_exit(NULL);
    }
-   void ManagerRoutine()
-   {
    
-   }
 public:
-   ConnectionManager(int socketNum)
+   ConnectionManager(int socketNum, MessagesBroker* msgsBroker)
    {
-      ConnectionManager tempObj;     
-      thread manager(&tempObj::Client, &tempObj, socketNum);
+      this->clientSocket = socketNum;
+      this->msgsBroker = msgsBroker;
+      thread manager(&ConnectionManager::Client, this, socketNum);
+   }
+
+   void SendMessage(Message msg)
+   {
+      if (clientSocket != msg.GetAuthorSocket())
+      {
+         send(clientSocket, msg.GetMessage().c_str(), msg.GetMessage().size(), 0);
+      }
+   }
+
+   void IsExit()
+   {
+      isExit = true;
    }
 };
+
 class ClientsConnectionsHandler 
 {
 
@@ -107,33 +167,10 @@ class ClientsConnectionsHandler
    struct sockaddr_in serverAddr;
    struct sockaddr_storage serverStorage;
    
-   void HandlerRoutine() 
-   {
-      
-      while (!isStop)
-      {
-         addr_size = sizeof(serverStorage);
-   
-         newSocket = accept(server, (struct sockaddr*)&serverStorage, &addr_size);   
-      
-         clientsSockets.push_back(newSocket);
-         curClientsNum++;
-     
-         pthread_create(&clientsThreads[i++], NULL, Client, &newSocket);
-         if (i >= MAXCLIENTS) {
-            i = 0;
-            while (i < MAXCLIENTS) {
-               pthread_join(clientsThreads[i++], NULL);
-            }
-            i = 0;
-         }
-      }
-      close(server);
-   }
-public:
-   ClientsConnectionsHandler()
-   {
-   
+   MessagesBroker* msgsBroker;
+
+   int InitServer()
+   { 
       server = socket(AF_INET, SOCK_STREAM, 0);
 
       if (server < 0)
@@ -155,85 +192,78 @@ public:
          cout << "Listening\n";
       else
          cout << "Error\n";
-      //Vstavit' conditions variable     
-      ClientsConnectionsHandler tempObj;
-      thread handler(&tempObj::HandlerRoutine, &tempObj);
    }
-};
-
-class IncomigMessagesHandler
-{
-   bool IsItCommand(string commandName)
+  
+   void HandlerRoutine() 
    {
-      return commandName[0] == '/'; 
-   }
-
-public:
-   void ReciveIncomingMessage(Message message)
-   {
-      if (IsItCommand(message.GetMessage()))
-      {
       
-      } else {
-         sem_wait(&output);     
-         cout << message.GetMessage() << "\n";
-         sem_post(&output);
-         //запрос на рассылку
-      }        
+      while (!isStop)
+      {
+         socklen_t addr_size = sizeof(serverStorage);
+   
+         newSocket = accept(server, (struct sockaddr*)&serverStorage, &addr_size);   
+      
+         ConnectionManager* manager = new ConnectionManager(newSocket, msgsBroker);
+         msgsBroker->AddManager(manager);                
+      }
+      close(server);
+   }
+public:
+   ClientsConnectionsHandler(MessagesBroker* msgsBroker)
+   {
+      InitServer();
+      this->msgsBroker = msgsBroker;
+      //TODO Vstavit' conditions variable     
+      thread handler(&ClientsConnectionsHandler::HandlerRoutine, this);
    }
 };
 
 class MessagesBroker
 {
+thread broker;
+vector<ConnectionManager*> connManagersVec;
+Message message;
+bool isMessage;
 
-public:
-   SendMessage(Message msg)
+   void BrokerRoutine()
    {
-
-   }
-};
-
-class CommandsHandler
-{
-   void AnalyzeCommand(Message commandName)
-   {
-      switch(commandName)
+      while(!isStop)
       {
-         case "/exit":
-   
-            break;
-         default:
-            //Запрос на рассылку сообщения о том, что команда не распознана
-      }  
-   }
-   
-   void HandlerRoutine()
-   {
-      while(!isStop) 
-      {
-         if (true)
-         { 
-            AnalyzeCommand();
-            string message = string(buffer);
-            if (message.find("User has exit!") != -1)
+         if (isMessage)
+         {
+            for(int i = 0; i < connManagersVec.size(); i++)
             {
-               isExit = true;
-               clientsSockets.erase(clientsSockets.begin() + indexInVec);
-               curClientsNum--;
+               connManagersVec[i]->SendMessage(message);
             }
-         }    
-      }   
+         }   
+      }
    }
 public:
-   CommandsHandler()
+   void IsMessageToSend(Message msg)
    {
-      CommandsHandler tempObj;
-      thread handler(&tempObj::HandlerRoutine, &tempObj);
+      //TODO вставить lock_guard
+      isMessage = true;
+      this->message = message;
+   }
+
+   MessagesBroker()
+   {
+      broker = thread(&MessagesBroker::BrokerRoutine, this);  
+   }
+
+   void AddManager(ConnectionManager* manager)
+   {
+      connManagersVec.push_back(manager);
    }
 };
 
 class InputHandler
 {
+MessagesBroker* msgsBroker;
+   bool IsItCommand(string str)
+   {
+      return str[0] == '/';
+   }   
 
    void Input() 
    {
@@ -241,27 +271,33 @@ class InputHandler
       while(!isStop) 
       {
          getline(cin, input);
-         if (input.compare("/stop") == 0)
+         if (IsItCommand(input))
          {
-            sem_wait(&output);
-            cout << "Server has stopped\n";
-            sem_post(&output);
-            isStop = true;
+            ServerCommandsHandler handler;
+            handler.AnalyzeCommand(input, msgsBroker);
+         } else {
+            outputHandler.PrintMessage(input);        
          }
       }
    }
 
 public:
-   InputHandler()
+   InputHandler(MessagesBroker* msgsBroker)
    {
+      this->msgsBroker = msgsBroker;
       Input();
    }
 };
+
 int main ()
 {
+   MessagesBroker* msgsBroker = new MessagesBroker();
+   ClientsConnectionsHandler* clientsConnectsHandler = new ClientsConnectionsHandler(msgsBroker);
+   InputHandler* inputHandler = new InputHandler(msgsBroker);
    
-   socklen_t addr_size;
-   sem_init(&output, 0, 1);
+   delete msgsBroker;
+   delete clientsConnectsHandler;
+   delete inputHandler;
    
    return 0;
 }  

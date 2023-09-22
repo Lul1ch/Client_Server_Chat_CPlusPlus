@@ -91,6 +91,7 @@ class ConnectionsManager
             cout << "Hello from messages thread " << networkSocket << "\n"; //TODO: Подумать над реализацией вывода дебага при передаче определённого флага запуска, например
             send(networkSocket, inputStr.c_str(), inputStr.length(),0);
             isMessage = false;
+            //isMessageMutex.unlock();
          } else if (!isExit){
             this_thread::sleep_for(chrono::milliseconds(1000));
          }

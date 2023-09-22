@@ -63,11 +63,15 @@ void* Client(void* args)
       SendMessageToOtherClients(newSocket, buffer);
       
       string message = string(buffer);
-      if (message.find("User has exit!") != -1)
+      if (message.find("/exit") != -1)
       {
          isExit = true;
          clientsSockets.erase(clientsSockets.begin() + indexInVec);
          curClientsNum--;
+         
+         sem_wait(&output);     
+         cout << "Client number " << newSocket << " has exited\n";
+         sem_post(&output);
       }    
    }
    pthread_exit(NULL);
