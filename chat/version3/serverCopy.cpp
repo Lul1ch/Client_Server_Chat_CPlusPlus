@@ -23,8 +23,7 @@ using namespace std;
 
 bool isStop = false;
 OutputHandler outputHandler;
-//TODO сделать удаление ссылки на ConnectionManager из вектора в Шине Сообщений при окончании его основного потока
-//TODO Перенести инициализацию переменных классов на одну табуляцию правее
+
 class Message
 {
 int authorSocket;
@@ -51,12 +50,6 @@ public:
       this->authorSocket = authorSocket;
       this->message = message;
    }
-   
-   void CopyData(Message* msg)
-   {
-      this->authorSocket = msg->GetAuthorSocket();
-      this->message = msg->GetMessage();
-   }
 
    Message& operator=(Message& msg)
    { 
@@ -69,43 +62,6 @@ public:
 class MessagesBroker;
 class ConnectionManager;
 
-class IncomingMessagesHandler
-{
-   bool IsItCommand(string commandName);
-public:
-   void ReciveIncomingMessage(Message* message, MessagesBroker* msgsBroker, ConnectionManager* manager);
-};
-
-class ConnectionManager{
-int clientSocket;
-IncomingMessagesHandler incMsgsHandler;
-MessagesBroker* msgsBroker;
-bool isExit = false;
-thread manager;
-   
-   void Client(int socket);
-public:
-   ConnectionManager(int socketNum, MessagesBroker* msgsBroker);
-
-   void SendMessage(Message msg);
-
-   void IsExit();   
-};
-class MessagesBroker {
-thread broker;
-vector<ConnectionManager*> connManagersVec;
-Message message;
-bool isMessage;
-
-   void BrokerRoutine();
-public:
-   void IsMessageToSend(Message*);
-
-   MessagesBroker();
-
-   void AddManager(ConnectionManager* manager);
-};
-
 class ClientsCommandsHandler
 {
 public:
@@ -116,9 +72,9 @@ public:
       string commandName = commandStr.substr(0, commandStr.find(" "));  
       if(commandName == "/exit")
       {
-         msgsBroker->IsMessageToSend(new Message(command->GetAuthorSocket(), string("User " + to_string(command->GetAuthorSocket()) + " logged out!")));
+         //TODO вставить рассылку сообщения об отключении клиента
          manager->IsExit();
-         outputHandler.PrintMessage(string("User " + to_string(command->GetAuthorSocket()) + " logged out!"), command->GetAuthorSocket());        
+         outputHandler.PrintMessage(string("User " + to_string(command->GetAuthorSocket()) + " logged out!"));        
       } else {
      
       }
@@ -140,57 +96,68 @@ public:
       }
    }
 };
- 
-   bool IncomingMessagesHandler::IsItCommand(string commandName)
+
+class IncomingMessagesHandler
+{  
+   bool IsItCommand(string commandName)
    {
       return commandName[0] == '/'; 
    }
 
-   void IncomingMessagesHandler::ReciveIncomingMessage(Message* message, MessagesBroker* msgsBroker, ConnectionManager* manager)
+public:
+   void ReciveIncomingMessage(Message* message, MessagesBroker* msgsBroker, ConnectionManager* manager)
    {
       if (IsItCommand(message->GetMessage()))
       {
          ClientsCommandsHandler handler;
          handler.AnalyzeCommand(message, msgsBroker, manager);           
       } else {
-         outputHandler.PrintMessage(message->GetMessage(), message->GetAuthorSocket());
-         msgsBroker->IsMessageToSend(message);
+         outputHandler.PrintMessage(message->GetMessage());
+         msgsBroker->IsMessageToSend();
       }        
    }
+};
 
-
-void ConnectionManager::Client(int socket)
+class ConnectionManager 
 {
-   clientSocket = socket;
-   char buffer[BUFSIZE];
+int clientSocket;
+IncomingMessagesHandler incMsgsHandler;
+MessagesBroker* msgsBroker;
+bool isExit = false;
 
-   while(!isExit) {
-      int lastIndex = recv(clientSocket, (char *)buffer, BUFSIZE, 0);
-      buffer[lastIndex] = '\0';
-      incMsgsHandler.ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker, this);          
-   }
-}
-   
-ConnectionManager::ConnectionManager(int socketNum, MessagesBroker* msgsBroker)
-{
-   this->clientSocket = socketNum;
-   this->msgsBroker = msgsBroker;
-   manager = thread(&ConnectionManager::Client, this, socketNum);
-   manager.detach();
-}
-
-void ConnectionManager::SendMessage(Message msg)
-{
-   if (clientSocket != msg.GetAuthorSocket())
+   void Client(int socket)
    {
-      send(clientSocket, msg.GetMessage().c_str(), msg.GetMessage().size(), 0);
-   }
-}
+      clientSocket = socket;
+      char buffer[BUFSIZE];
 
-void ConnectionManager::IsExit()
-{
-   isExit = true;
-}
+      while(!isExit) {
+         int lastIndex = recv(clientSocket, (char *)buffer, BUFSIZE, 0);
+         buffer[lastIndex] = '\0';
+         incMsgsHandler.ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker, this);          
+      }
+   }
+   
+public:
+   ConnectionManager(int socketNum, MessagesBroker* msgsBroker)
+   {
+      this->clientSocket = socketNum;
+      this->msgsBroker = msgsBroker;
+      thread manager(&ConnectionManager::Client, this, socketNum);
+   }
+
+   void SendMessage(Message msg)
+   {
+      if (clientSocket != msg.GetAuthorSocket())
+      {
+         send(clientSocket, msg.GetMessage().c_str(), msg.GetMessage().size(), 0);
+      }
+   }
+
+   void IsExit()
+   {
+      isExit = true;
+   }
+};
 
 class ClientsConnectionsHandler 
 {
@@ -201,7 +168,6 @@ class ClientsConnectionsHandler
    struct sockaddr_storage serverStorage;
    
    MessagesBroker* msgsBroker;
-   thread handler;
 
    int InitServer()
    { 
@@ -248,45 +214,48 @@ public:
       InitServer();
       this->msgsBroker = msgsBroker;
       //TODO Vstavit' conditions variable     
-      handler = thread(&ClientsConnectionsHandler::HandlerRoutine, this);
-      handler.detach();
+      thread handler(&ClientsConnectionsHandler::HandlerRoutine, this);
    }
 };
 
-void MessagesBroker::BrokerRoutine()
+class MessagesBroker
 {
-   while(!isStop)
+thread broker;
+vector<ConnectionManager*> connManagersVec;
+Message message;
+bool isMessage;
+
+   void BrokerRoutine()
    {
-      if (isMessage)
+      while(!isStop)
       {
-         //TODO Вставить lock_guard
-         for(int i = 0; i < connManagersVec.size(); i++)
+         if (isMessage)
          {
-            connManagersVec[i]->SendMessage(message);
-         }
-         isMessage = false;
-      }   
+            for(int i = 0; i < connManagersVec.size(); i++)
+            {
+               connManagersVec[i]->SendMessage(message);
+            }
+         }   
+      }
    }
-}
+public:
+   void IsMessageToSend(Message msg)
+   {
+      //TODO вставить lock_guard
+      isMessage = true;
+      this->message = message;
+   }
 
-void MessagesBroker::IsMessageToSend(Message* msg)
-{
-   //TODO вставить lock_guard
-   isMessage = true;
-   this->message = *msg;
-   //this->message.CopyData(msg);
-}
+   MessagesBroker()
+   {
+      broker = thread(&MessagesBroker::BrokerRoutine, this);  
+   }
 
-MessagesBroker::MessagesBroker()
-{
-   broker = thread(&MessagesBroker::BrokerRoutine, this);  
-   broker.detach();
-}
-
-void MessagesBroker::AddManager(ConnectionManager* manager)
-{
-   connManagersVec.push_back(manager);
-}
+   void AddManager(ConnectionManager* manager)
+   {
+      connManagersVec.push_back(manager);
+   }
+};
 
 class InputHandler
 {
@@ -307,7 +276,7 @@ MessagesBroker* msgsBroker;
             ServerCommandsHandler handler;
             handler.AnalyzeCommand(input, msgsBroker);
          } else {
-            outputHandler.PrintMessage("Unknown input!\n", 0);//TODO Убрать вывод или заменить магическое число 0        
+            outputHandler.PrintMessage(input);        
          }
       }
    }

@@ -88,7 +88,7 @@ class ConnectionsManager
          if(isMessage && !isExit)
          {
             lock_guard<mutex> guard(isMessageMutex);
-            cout << "Hello from messages thread " << networkSocket << "\n"; //TODO: Подумать над реализацией вывода дебага при передаче определённого флага запуска, например
+            //cout << "Hello from messages thread " << networkSocket << "\n"; //TODO: Подумать над реализацией вывода дебага при передаче определённого флага запуска, например
             send(networkSocket, inputStr.c_str(), inputStr.length(),0);
             isMessage = false;
          } else if (!isExit){
@@ -120,7 +120,7 @@ public:
       lock_guard<mutex> guard(isMessageMutex);
       isMessage = true;
       this->inputStr = inputStr;
-      cout << "Message executed\n";
+      //cout << "Message sent\n";
    }
 };
 
@@ -181,10 +181,9 @@ class CommandsHandler
       {      
          if(isCommand)
          {
-            cout << "Hello from command thread\n";
+            //cout << "Hello from command thread\n";
             lock_guard<mutex> guard(isCommandMutex);
             string commandName = inputStr.substr(0, inputStr.find(" "));
-            cout << "|" << commandName << "|\n"; 
            //funcMap[commandName]->Execute();
             ExecuteCommand(commandName);
             isCommand = false;
@@ -207,7 +206,7 @@ public:
       lock_guard<mutex> guard(isCommandMutex);
       isCommand = true;
       this->inputStr = inputStr;
-      cout << "Command executed\n";
+      //cout << "Command executed\n";
    }   
 };
 
@@ -236,11 +235,11 @@ public:
          getline(cin, inputStr);
          if (IsItCommand(inputStr))
          {
-            cout << "Command\n";
+            //cout << "Command\n";
             handler->IsCommandToHandle(inputStr);
          } else 
          {
-            cout << "Message\n";
+            //cout << "Message\n";
             manager->IsMessageToSend(inputStr);
          }
          
