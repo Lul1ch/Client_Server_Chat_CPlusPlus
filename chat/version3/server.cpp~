@@ -23,23 +23,7 @@ using namespace std;
 
 bool isStop = false;
 OutputHandler outputHandler;
-
-template <class T>
-class smart_lock_guard : lock_guard<T> {
-bool value;
-bool& varToChange;
-public: 
-   smart_lock_guard(bool& varToChange, bool value, T& mutex) : lock_guard<T>(mutex), varToChange(varToChange) 
-   {
-      this->value = value;
-   }
-   
-   ~smart_lock_guard()
-   {
-      varToChange = value;
-   }
-};
-
+//TODO сделать удаление ссылки на ConnectionManager из вектора в Шине Сообщений при окончании его основного потока
 class Message
 {
    int authorSocket;
@@ -108,7 +92,6 @@ class MessagesBroker {
    vector<ConnectionManager*> connManagersVec;
    Message message;
    bool isMessage;
-   mutex messageMutex;
 
    void BrokerRoutine();
 public:
@@ -137,7 +120,7 @@ public:
          manager->IsExit();
          
          msgsBroker->IsMessageToSend(new Message(command->GetAuthorSocket(), string("User " + to_string(command->GetAuthorSocket()) + " logged out!")));
-         msgsBroker->EraseManager(manager->GetIndexInVec());
+         //msgsBroker->EraseManager(manager->GetIndexInVec());
 
          outputHandler.PrintMessage(string("User " + to_string(command->GetAuthorSocket()) + " logged out!"), command->GetAuthorSocket());        
       } else {
@@ -217,6 +200,7 @@ void ConnectionManager::IsExit()
 
 int ConnectionManager::GetIndexInVec()
 {
+   outputHandler.PrintMessage(to_string(indexInVec), 0);  
    return indexInVec;
 }
 class ClientsConnectionsHandler 
@@ -276,6 +260,7 @@ public:
    {
       InitServer();
       this->msgsBroker = msgsBroker;
+      //TODO Vstavit' conditions variable     
       handler = thread(&ClientsConnectionsHandler::HandlerRoutine, this);
       //handler.detach();
    }
@@ -287,6 +272,7 @@ public:
 
    ~ClientsConnectionsHandler()
    {
+      outputHandler.PrintMessage("Hello from destructor\n", 0);
       close(server);
    }
 };
@@ -297,18 +283,20 @@ void MessagesBroker::BrokerRoutine()
    {
       if (isMessage)
       {
-         smart_lock_guard<mutex> guard(isMessage, false, messageMutex);
+         //TODO Вставить lock_guard
          for(int i = 0; i < connManagersVec.size(); i++)
          {
             connManagersVec[i]->SendMessage(message);
          }
+         isMessage = false;
       }   
    }
 }
 
 void MessagesBroker::IsMessageToSend(Message* msg)
 {
-   smart_lock_guard<mutex> guard(isMessage, true, messageMutex);  
+   //TODO вставить lock_guard
+   isMessage = true;
    this->message = *msg;
 }
 
@@ -356,7 +344,7 @@ class InputHandler
             ServerCommandsHandler handler;
             handler.AnalyzeCommand(input, msgsBroker);
          } else {
-            outputHandler.PrintServerMessage("Unknown input!\n");   
+            outputHandler.PrintMessage("Unknown input!\n", 0);//TODO Убрать вывод или заменить магическое число 0        
          }
       }
    }
@@ -381,5 +369,6 @@ int main ()
    delete msgsBroker;
    delete clientsConnectsHandler;
    delete inputHandler;
+   
    return 0;
 }  

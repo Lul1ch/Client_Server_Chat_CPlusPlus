@@ -68,7 +68,7 @@ class ConnectionsManager
       struct sockaddr_in serverAddress;
       serverAddress.sin_family = AF_INET;
       serverAddress.sin_addr.s_addr = INADDR_ANY;
-      serverAddress.sin_port = htons(PORT); //TODO: Узнать, что делает эта функция
+      serverAddress.sin_port = htons(PORT); //host-to-network short меняет в памяти местами байты, располагая их в прямой последовательности.
 
       int connectionStatus = connect(networkSocket, (struct sockaddr*)&serverAddress,
                                  sizeof(serverAddress));
@@ -77,7 +77,7 @@ class ConnectionsManager
 
    void ClientThread()
    {  
-      if (EstablishTheConnection() < 0) //TODO: Узнать по каким причинам могло не установиться соединение
+      if (EstablishTheConnection() < 0) //Причины найдены, но как их обрабатывать пока не понятно.
       {
          cout << "An error occurred during the attempt to establish the connection\n";
          isExit = true;
@@ -87,10 +87,9 @@ class ConnectionsManager
       {
          if(isMessage && !isExit)
          {
-            lock_guard<mutex> guard(isMessageMutex);
+            smart_lock_guard<mutex> guard(isMessage, false, isMessageMutex);
             //cout << "Hello from messages thread " << networkSocket << "\n"; //TODO: Подумать над реализацией вывода дебага при передаче определённого флага запуска, например
             send(networkSocket, inputStr.c_str(), inputStr.length(),0);
-            isMessage = false;
          } else if (!isExit){
             this_thread::sleep_for(chrono::milliseconds(1000));
          }
@@ -117,8 +116,7 @@ public:
 
    void IsMessageToSend(string inputStr)
    {
-      lock_guard<mutex> guard(isMessageMutex);
-      isMessage = true;
+      smart_lock_guard<mutex> guard(isMessage, true, isMessageMutex);
       this->inputStr = inputStr;
       //cout << "Message sent\n";
    }
@@ -182,17 +180,16 @@ class CommandsHandler
          if(isCommand)
          {
             //cout << "Hello from command thread\n";
-            lock_guard<mutex> guard(isCommandMutex);
+            smart_lock_guard<mutex> guard(isCommand, false, isCommandMutex);
             string commandName = inputStr.substr(0, inputStr.find(" "));
            //funcMap[commandName]->Execute();
             ExecuteCommand(commandName);
-            isCommand = false;
          } else {
             this_thread::sleep_for(chrono::milliseconds(1000));
          }
       }
    }
-//TODO Попробовать разыменовать NULL ptr
+//Попробовать разыменовать nullptr -> затирает весь вывод в консоль после вывода разыменованного указателя
 public:
    CommandsHandler(ConnectionsManager* manager)
    {
@@ -203,8 +200,7 @@ public:
    }
    void IsCommandToHandle(string inputStr)
    {
-      lock_guard<mutex> guard(isCommandMutex);
-      isCommand = true;
+      smart_lock_guard<mutex> guard(isCommand, true, isCommandMutex);
       this->inputStr = inputStr;
       //cout << "Command executed\n";
    }   
