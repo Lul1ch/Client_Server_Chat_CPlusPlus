@@ -14,28 +14,16 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include "smartLockGuard.h"
+#include "output.h"
 using namespace std;
 
 #define PORT 1504
 #define BUFSIZE 1024
 
 bool isExit = false;
-
-template <class T>
-class smart_lock_guard : lock_guard<T> {
-bool value;
-bool& varToChange;
-public: 
-   smart_lock_guard(bool& varToChange, bool value, T& mutex) : lock_guard<T>(mutex), varToChange(varToChange) 
-   {
-      this->value = value;
-   }
-   
-   ~smart_lock_guard()
-   {
-      varToChange = value;
-   }
-};
+bool isDebug = false;
+OutputHandler outputHandler;
 
 class ConnectionsManager
 {
@@ -54,7 +42,7 @@ class ConnectionsManager
          if(networkSocket != -1) {
             int lastIndex = recv(networkSocket, (char*)buffer,BUFSIZE,0);
             buffer[lastIndex] = '\0';
-            cout << buffer << "\n";
+            outputHandler.PrintRecivedMessage(string(buffer));
          }
 
       }
@@ -88,7 +76,7 @@ class ConnectionsManager
          if(isMessage && !isExit)
          {
             smart_lock_guard<mutex> guard(isMessage, false, isMessageMutex);
-            //cout << "Hello from messages thread " << networkSocket << "\n"; //TODO: Подумать над реализацией вывода дебага при передаче определённого флага запуска, например
+            outputHandler.DebugLog("Hello from messages thread\n");
             send(networkSocket, inputStr.c_str(), inputStr.length(),0);
          } else if (!isExit){
             this_thread::sleep_for(chrono::milliseconds(1000));
@@ -118,28 +106,24 @@ public:
    {
       smart_lock_guard<mutex> guard(isMessage, true, isMessageMutex);
       this->inputStr = inputStr;
-      //cout << "Message sent\n";
+      
+      outputHandler.DebugLog("Message sent\n");
    }
 };
 
 /*class Command 
 {
 public:
-   virtual void Execute()
-   {
-
-   }
+   virtual void Execute(string inputStr);
    
-   virtual string GetName()
-   {
-
-   }
+   virtual string GetName();
 };
 
 class Exit : Command {
 public:
-   void Execute() override 
+   void Execute(string inputStr) override 
    {
+      manager->IsMessageToSend(inputStr);
       isExit = true;
    }
 
@@ -179,7 +163,7 @@ class CommandsHandler
       {      
          if(isCommand)
          {
-            //cout << "Hello from command thread\n";
+            outputHandler.DebugLog("Hello from command thread\n");
             smart_lock_guard<mutex> guard(isCommand, false, isCommandMutex);
             string commandName = inputStr.substr(0, inputStr.find(" "));
            //funcMap[commandName]->Execute();
@@ -202,7 +186,7 @@ public:
    {
       smart_lock_guard<mutex> guard(isCommand, true, isCommandMutex);
       this->inputStr = inputStr;
-      //cout << "Command executed\n";
+      outputHandler.DebugLog("Command executed\n");
    }   
 };
 
@@ -231,11 +215,11 @@ public:
          getline(cin, inputStr);
          if (IsItCommand(inputStr))
          {
-            //cout << "Command\n";
+            outputHandler.DebugLog("Command\n");
             handler->IsCommandToHandle(inputStr);
          } else 
          {
-            //cout << "Message\n";
+            outputHandler.DebugLog("Message\n");
             manager->IsMessageToSend(inputStr);
          }
          
