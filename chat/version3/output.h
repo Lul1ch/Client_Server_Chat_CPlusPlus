@@ -19,7 +19,7 @@ public:
       std::cout << "Server: " << str << "\n";
    }
 
-   void PrintRecivedMessage(std::string str)
+   void PrintMessage(std::string str)
    {
       std::lock_guard<std::mutex> guard(output);
       std::cout << str << "\n";

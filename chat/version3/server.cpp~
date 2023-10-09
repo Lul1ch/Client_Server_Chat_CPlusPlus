@@ -23,7 +23,7 @@ using namespace std;
 
 #define PORT 1504
 #define BUFSIZE 1024
-#define MAXCLIENTS 10
+#define MAXCLIENTS 50
 
 bool isStop = false;
 OutputHandler outputHandler;
@@ -38,7 +38,8 @@ void MessagesBroker<ConnectionManager>::TerminateAllSubscribersThreads();
 
 class ExecutableClient
 {
-   class CommandClient
+
+   class Command 
    {
    public:
       virtual void Execute(const Message* message){}
@@ -46,14 +47,14 @@ class ExecutableClient
       virtual string GetName(){ return "/command"; }
    };
 
-   class Exit : public  CommandClient
+   class Exit : public  Command 
    {
       MessagesBroker<ConnectionManager>* msgsBroker;
+      int clientSocket;
    public:
       void Execute(const Message* message) override 
       {
-         int clientSocket = message->GetAuthorSocket();
-         msgsBroker->IsMessageToSend(new Message(clientSocket, string("User " + to_string(clientSocket) + " logged out!")));
+         msgsBroker->IsMessageToSend(new Message(message->GetAuthorSocket(), string("User " + to_string(message->GetAuthorSocket()) + " logged out!")));
          msgsBroker->TerminateTheSubscriberThread(clientSocket);
          msgsBroker->EraseSubscriber(clientSocket);
       }
@@ -63,94 +64,54 @@ class ExecutableClient
          return "/exit";
       }
 
-      Exit(MessagesBroker<ConnectionManager>* msgsBroker)
+      Exit(MessagesBroker<ConnectionManager>* msgsBroker, const int clientSocket)
       {
          this->msgsBroker = msgsBroker;
+         this->clientSocket = clientSocket;   
       }
    };
 
-   map<string, CommandClient*> funcMapClient;
+   map<string, Command*> funcMap;
 public:
 
-   ExecutableClient(MessagesBroker<ConnectionManager>* msgsBroker)
+   Executable(MessagesBroker<ConnectionManager>* msgsBroker,const int clientSocket)
    {
-      funcMapClient.insert(make_pair("/exit", new Exit(msgsBroker)));
-   }
-   
-   void ExecuteCommandClient(const Message* command)
-   {
-      string commandName = command->GetMessage().substr(0, command->GetMessage().find(" "));
-      funcMapClient[commandName]->Execute(command);
-   }
-};
-
-class ClientsCommandsHandler
-{
-ExecutableClient* clientCommands;
-public:
-   ClientsCommandsHandler(MessagesBroker<ConnectionManager>* msgsBroker)
-   {
-      clientCommands = new ExecutableClient(msgsBroker);
-   }
-   void AnalyzeCommand(const Message* command)
-   {  
-      clientCommands->ExecuteCommandClient(command);
-   }
-};
-
-class ExecutableServer
-{
-   //Стоит ли вынести в общий класс/заголовочный файл
-   class CommandServ
-   {
-   public:
-      virtual void Execute(const string inputStr){}
-
-      virtual string GetName(){ return "/command"; }
-   };
-
-   class Stop : public  CommandServ 
-   {
-   public:
-      void Execute(const string inputStr) override 
-      {
-         isStop = true;
-      }
-
-      string GetName() override
-      {
-         return "/exit";
-      }
-   };
-
-   map<string, CommandServ*> funcMapServ;
-public:
-
-   ExecutableServer()
-   {
-      funcMapServ.insert(make_pair("/stop", new Stop()));
+      funcMap.insert(make_pair("/exit", new Exit(msgsBroker, clientSocket)));
    }
    
    void ExecuteCommand(string inputStr)
    {
       string commandName = inputStr.substr(0, inputStr.find(" "));
-      funcMapServ[commandName]->Execute(inputStr);
+      funcMap[commandName]->Execute(inputStr);
+   }
+};
+
+class ClientsCommandsHandler
+{
+public:
+   void AnalyzeCommand(const Message* command,  MessagesBroker<ConnectionManager>* msgsBroker, const int clientSocket)
+   {  
+      string commandStr = command->GetMessage();
+      string commandName = commandStr.substr(0, commandStr.find(" "));  
    }
 };
 
 class ServerCommandsHandler
 {
-ExecutableServer* serverCommands = new ExecutableServer();
 public:
-   void AnalyzeCommand(const string command)
+   void AnalyzeCommand(const string command, MessagesBroker<ConnectionManager>* msgsBroker)
    {   
-      serverCommands->ExecuteCommand(command);
+      string commandName = command.substr(0, command.find(" "));  
+      if(commandName == "/stop")
+      {       
+         isStop = true;
+      }
    }
 };
 
 class IncomingMessagesHandler
 {
-   ClientsCommandsHandler* handler;
+   ClientsCommandsHandler handler;
 
    bool IsItCommand(string commandName)
    {
@@ -158,15 +119,11 @@ class IncomingMessagesHandler
    }
 
 public:
-   IncomingMessagesHandler(MessagesBroker<ConnectionManager>* msgsBroker)
-   {
-      handler = new ClientsCommandsHandler(msgsBroker);
-   }
-   void ReciveIncomingMessage(const Message* message, MessagesBroker<ConnectionManager>* msgsBroker)
+   void ReciveIncomingMessage(const Message* message, MessagesBroker<ConnectionManager>* msgsBroker, const int clientSocket)
    {
       if (IsItCommand(message->GetMessage()))
       {
-         handler->AnalyzeCommand(message);           
+         handler.AnalyzeCommand(message, msgsBroker, clientSocket);           
       } else {
          outputHandler.PrintClientMessage(message->GetMessage(), message->GetAuthorSocket());
          msgsBroker->IsMessageToSend(message);
@@ -177,8 +134,8 @@ public:
 class ConnectionManager
 {
    int clientSocket;
-   MessagesBroker<ConnectionManager>* msgsBroker; 
-   IncomingMessagesHandler* incMsgsHandler;
+   IncomingMessagesHandler incMsgsHandler;
+   MessagesBroker<ConnectionManager>* msgsBroker;
    bool isExit = false;
    thread manager;
    
@@ -192,10 +149,11 @@ class ConnectionManager
          if (lastIndex != -1)
          {
             buffer[lastIndex] = '\0';
-            incMsgsHandler->ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker);          
+            incMsgsHandler.ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker, clientSocket);          
          }
          this_thread::sleep_for(chrono::milliseconds(10));
       }
+      cout << "Socket: " << clientSocket << "\n";
       outputHandler.PrintClientMessage(string("User " + to_string(clientSocket) + " logged out!"), clientSocket);        
       close(clientSocket);
    }
@@ -205,9 +163,6 @@ public:
    {
       this->clientSocket = socketNum;
       this->msgsBroker = msgsBroker;
-
-      incMsgsHandler = new IncomingMessagesHandler(msgsBroker);
-      
       manager = thread(&ConnectionManager::Client, this);
       manager.detach();
    }
@@ -261,7 +216,7 @@ class ClientsConnectionsHandler
 
    int InitServer()
    { 
-      server = socket(AF_INET, SOCK_STREAM, 0); //SOCK_STREAM
+      server = socket(AF_INET, SOCK_STREAM, 0);
 
       if (server < 0)
       {
@@ -331,10 +286,7 @@ public:
 
 class InputHandler
 {
-
-   ServerCommandsHandler handler;
    MessagesBroker<ConnectionManager>* msgsBroker;
-   
    bool IsItCommand(string str)
    {
       return str[0] == '/';
@@ -354,7 +306,8 @@ public:
          getline(cin, input);
          if (IsItCommand(input))
          {
-            handler.AnalyzeCommand(input);
+            ServerCommandsHandler handler;
+            handler.AnalyzeCommand(input, msgsBroker);
          } else {
             outputHandler.PrintServerMessage("Unknown input!");   
          }

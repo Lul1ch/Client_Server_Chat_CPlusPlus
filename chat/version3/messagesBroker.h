@@ -1,4 +1,5 @@
 #include <thread>
+#include <chrono>
 #include <mutex>
 #include <map>
 #include <queue>
@@ -31,8 +32,11 @@ void BrokerRoutine()
             }
             msgsQueue.pop();  
          }
+      } else {
+         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }   
    }
+   TerminateAllSubscribersThreads();
 }
 public:
 
@@ -48,14 +52,14 @@ MessagesBroker(bool* stopCond)
    broker = std::thread(&MessagesBroker::BrokerRoutine, this);  
 }
 
-void AddSubscriber(const int socketNum, T* subscriber)
+void AddSubscriber(const int key, T* subscriber)
 {
-   subscribersMap.insert({socketNum, subscriber});
+   subscribersMap.insert({key, subscriber});
 }
 
-void EraseSubscriber(int key)
+void EraseSubscriber(const int key)
 {
-   delete subscribersMap[key];
+   //free(subscribersMap[key]);
    subscribersMap.erase(key);
 }
 
