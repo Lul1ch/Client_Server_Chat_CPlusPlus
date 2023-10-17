@@ -16,7 +16,10 @@
 #include <thread>
 #include <utility>
 #include <mutex>
+#include <memory>
 #include "output.h"
+#include "smartLockGuard.h"
+#include "message.h"
 #include "messagesBroker.h"
 
 using namespace std;
@@ -27,7 +30,7 @@ using namespace std;
 
 bool isStop = false;
 OutputHandler outputHandler;
-
+constexpr int sleepTime = 10;
 class ConnectionManager;
 
 template<>
@@ -36,21 +39,23 @@ void MessagesBroker<ConnectionManager>::TerminateTheSubscriberThread(int key);
 template<>
 void MessagesBroker<ConnectionManager>::TerminateAllSubscribersThreads();
 
-class ExecutableClient
+class ClientCommandsSet
 {
    class CommandClient
    {
    public:
-      virtual void Execute(const Message* message){}
+      virtual void Execute(const shared_ptr<Message> message){}
 
       virtual string GetName(){ return "/command"; }
+
+      virtual ~CommandClient(){}
    };
 
    class Exit : public  CommandClient
    {
       MessagesBroker<ConnectionManager>* msgsBroker;
    public:
-      void Execute(const Message* message) override 
+      void Execute(const shared_ptr<Message> message) override 
       {
          int clientSocket = message->GetAuthorSocket();
          msgsBroker->IsMessageToSend(new Message(clientSocket, string("User " + to_string(clientSocket) + " logged out!")));
@@ -72,41 +77,48 @@ class ExecutableClient
    map<string, CommandClient*> funcMapClient;
 public:
 
-   ExecutableClient(MessagesBroker<ConnectionManager>* msgsBroker)
+   ClientCommandsSet(MessagesBroker<ConnectionManager>* msgsBroker)
    {
       funcMapClient.insert(make_pair("/exit", new Exit(msgsBroker)));
    }
    
-   void ExecuteCommandClient(const Message* command)
+   void ExecuteCommandClient(const shared_ptr<Message> command)
    {
       string commandName = command->GetMessage().substr(0, command->GetMessage().find(" "));
-      funcMapClient[commandName]->Execute(command);
+      if (funcMapClient.count(commandName) > 0)
+      {
+         funcMapClient[commandName]->Execute(command);
+      } else {
+         outputHandler.PrintServerMessage("Unknown client command!");
+      }
    }
 };
 
 class ClientsCommandsHandler
 {
-ExecutableClient* clientCommands;
+unique_ptr<ClientCommandsSet> clientCommands;
 public:
    ClientsCommandsHandler(MessagesBroker<ConnectionManager>* msgsBroker)
    {
-      clientCommands = new ExecutableClient(msgsBroker);
+      clientCommands = unique_ptr<ClientCommandsSet>(new ClientCommandsSet(msgsBroker));
    }
-   void AnalyzeCommand(const Message* command)
+
+   void AnalyzeCommand(const shared_ptr<Message> command)
    {  
       clientCommands->ExecuteCommandClient(command);
    }
 };
 
-class ExecutableServer
+class ServerCommandsSet
 {
-   //Стоит ли вынести в общий класс/заголовочный файл
    class CommandServ
    {
    public:
       virtual void Execute(const string inputStr){}
 
       virtual string GetName(){ return "/command"; }
+   
+      virtual ~CommandServ(){}
    };
 
    class Stop : public  CommandServ 
@@ -119,29 +131,53 @@ class ExecutableServer
 
       string GetName() override
       {
-         return "/exit";
+         return "/stop";
       }
    };
-
+   
    map<string, CommandServ*> funcMapServ;
+   
+   template<class T>
+   void EmplaceCommand()
+   {
+      CommandServ* command = new T();
+      funcMapServ.insert(make_pair(command->GetName(), command));
+   }
 public:
 
-   ExecutableServer()
+   ServerCommandsSet()
    {
-      funcMapServ.insert(make_pair("/stop", new Stop()));
+      EmplaceCommand<Stop>();
    }
    
    void ExecuteCommand(string inputStr)
    {
       string commandName = inputStr.substr(0, inputStr.find(" "));
-      funcMapServ[commandName]->Execute(inputStr);
+      if (funcMapServ.count(commandName) > 0)
+      {
+         funcMapServ[commandName]->Execute(inputStr);
+      } else {
+         outputHandler.PrintServerMessage("Unknown server command!");
+      }
+   }
+
+   ~ServerCommandsSet()
+   {
+      for(auto& command : funcMapServ)
+      {
+         delete command.second;
+      }
    }
 };
 
 class ServerCommandsHandler
 {
-ExecutableServer* serverCommands = new ExecutableServer();
+unique_ptr<ServerCommandsSet> serverCommands = nullptr;
 public:
+   ServerCommandsHandler()
+   {
+      serverCommands = unique_ptr<ServerCommandsSet>(new ServerCommandsSet());
+   }
    void AnalyzeCommand(const string command)
    {   
       serverCommands->ExecuteCommand(command);
@@ -150,7 +186,7 @@ public:
 
 class IncomingMessagesHandler
 {
-   ClientsCommandsHandler* handler;
+   unique_ptr<ClientsCommandsHandler> handler;
 
    bool IsItCommand(string commandName)
    {
@@ -160,17 +196,17 @@ class IncomingMessagesHandler
 public:
    IncomingMessagesHandler(MessagesBroker<ConnectionManager>* msgsBroker)
    {
-      handler = new ClientsCommandsHandler(msgsBroker);
+      handler = unique_ptr<ClientsCommandsHandler>(new ClientsCommandsHandler(msgsBroker));
    }
    void ReciveIncomingMessage(const Message* message, MessagesBroker<ConnectionManager>* msgsBroker)
    {
       if (IsItCommand(message->GetMessage()))
       {
-         handler->AnalyzeCommand(message);           
+         handler->AnalyzeCommand(shared_ptr<Message>((Message*)message));           
       } else {
          outputHandler.PrintClientMessage(message->GetMessage(), message->GetAuthorSocket());
          msgsBroker->IsMessageToSend(message);
-      }        
+      }      
    }
 };
 
@@ -178,7 +214,7 @@ class ConnectionManager
 {
    int clientSocket;
    MessagesBroker<ConnectionManager>* msgsBroker; 
-   IncomingMessagesHandler* incMsgsHandler;
+   unique_ptr<IncomingMessagesHandler> incMsgsHandler;
    bool isExit = false;
    thread manager;
    
@@ -194,7 +230,7 @@ class ConnectionManager
             buffer[lastIndex] = '\0';
             incMsgsHandler->ReciveIncomingMessage(new Message(clientSocket, string(buffer)), msgsBroker);          
          }
-         this_thread::sleep_for(chrono::milliseconds(10));
+         this_thread::sleep_for(chrono::milliseconds(sleepTime));
       }
       outputHandler.PrintClientMessage(string("User " + to_string(clientSocket) + " logged out!"), clientSocket);        
       close(clientSocket);
@@ -206,7 +242,7 @@ public:
       this->clientSocket = socketNum;
       this->msgsBroker = msgsBroker;
 
-      incMsgsHandler = new IncomingMessagesHandler(msgsBroker);
+      incMsgsHandler = unique_ptr<IncomingMessagesHandler>(new IncomingMessagesHandler(msgsBroker));
       
       manager = thread(&ConnectionManager::Client, this);
       manager.detach();
@@ -243,7 +279,7 @@ void MessagesBroker<ConnectionManager>::TerminateAllSubscribersThreads()
 {
       for(auto& element: subscribersMap)
       {
-         element.second->SendMessage(*(new Message(-1, "!stop"))); //TODO Заменить магическое число -1
+         element.second->SendMessage(*(new Message(NO_AUTHOR, "!stop")));
          element.second->ChangeExitFlag(true);
       }
 }
@@ -259,9 +295,9 @@ class ClientsConnectionsHandler
    MessagesBroker<ConnectionManager>* msgsBroker;
    thread handler;
 
-   int InitServer()
+   int InitServerSocket()
    { 
-      server = socket(AF_INET, SOCK_STREAM, 0); //SOCK_STREAM
+      server = socket(AF_INET, SOCK_STREAM, 0);
 
       if (server < 0)
       {
@@ -287,32 +323,33 @@ class ClientsConnectionsHandler
          isStop = true;
          return -1;
       }
-      if (listen(server, MAXCLIENTS) == 0)
-         cout << "Listening\n";
-      else
-         cout << "Error\n";
    }
   
    void HandlerRoutine() 
    {
       
+      if (listen(server, MAXCLIENTS) == 0)
+         cout << "Listening\n";
+      else
+         cout << "Error\n";
+      
       while (!isStop)
       {
          socklen_t addr_size = sizeof(serverStorage);
-         //TODO: Решить как завершить прослушку подключений клиента при остановке сервера
+         
          newSocket = accept(server, (struct sockaddr*)&serverStorage, &addr_size);
          if (newSocket != -1) 
          {
             ConnectionManager* manager = new ConnectionManager(newSocket, msgsBroker);
             msgsBroker->AddSubscriber(newSocket, manager);                
          }
-         this_thread::sleep_for(chrono::milliseconds(10));
+         this_thread::sleep_for(chrono::milliseconds(sleepTime));
       }
    }
 public:
    ClientsConnectionsHandler(MessagesBroker<ConnectionManager>* msgsBroker)
    {
-      InitServer();
+      InitServerSocket();
       this->msgsBroker = msgsBroker;
       handler = thread(&ClientsConnectionsHandler::HandlerRoutine, this);
    }
@@ -373,6 +410,7 @@ int main ()
    msgsBroker->JoinRoutineThread();
    clientsConnectsHandler->JoinRoutineThread();
    
+   this_thread::sleep_for(chrono::milliseconds(sleepTime*2));
    delete msgsBroker;
    delete clientsConnectsHandler;
    delete inputHandler;

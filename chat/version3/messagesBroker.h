@@ -1,3 +1,4 @@
+#pragma once
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -44,6 +45,7 @@ void IsMessageToSend(const Message* msg)
 {
    smart_lock_guard<std::mutex> guard(isMessage, true, messageMutex);  
    msgsQueue.push(*msg);
+   delete msg;
 }
 
 MessagesBroker(bool* stopCond)

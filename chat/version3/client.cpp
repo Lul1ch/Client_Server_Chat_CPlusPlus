@@ -14,6 +14,7 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <memory>
 #include "smartLockGuard.h"
 #include "output.h"
 using namespace std;
@@ -50,9 +51,7 @@ class Executable
       }
    };
 
-   map<string, Command*> funcMap; /*= {
-      {"/exit", new Exit()}
-   };*/
+   map<string, Command*> funcMap;
 public:
 
    Executable()
@@ -63,7 +62,12 @@ public:
    void ExecuteCommand(string inputStr)
    {
       string commandName = inputStr.substr(0, inputStr.find(" "));
-      funcMap[commandName]->Execute(inputStr);
+      if (funcMap.count(commandName) > 0)
+      {
+         funcMap[commandName]->Execute(inputStr);
+      } else {
+         outputHandler.PrintMessage("Unknown command!");
+      }
    }
 };
 
@@ -126,11 +130,6 @@ public:
       }
       return isExit;
    }
-
-   ~CommandsHandler()
-   {
-      delete commands;
-   }  
 };
 
 class RecivedMessagesHandler
@@ -140,7 +139,7 @@ class RecivedMessagesHandler
       return str[0] == '!';
    }
 public:
-   void AnalyzeRecivedMessage(string str, CommandsHandler* commandsHandler)
+   void AnalyzeRecivedMessage(string str, shared_ptr<CommandsHandler> commandsHandler)
    {
       if (IsItCommandResult(str))
       {
@@ -165,7 +164,7 @@ class ConnectionsManager
    thread client;  
    
    RecivedMessagesHandler rcvMsgsHandler;
-   CommandsHandler* commandsHandler;
+   shared_ptr<CommandsHandler> commandsHandler;
    void MessagesListener() 
    {
       char buffer[BUFSIZE];
@@ -228,7 +227,7 @@ class ConnectionsManager
       close(networkSocket);  
    }
 public:
-   ConnectionsManager(CommandsHandler* commandsHandler)
+   ConnectionsManager(shared_ptr<CommandsHandler> commandsHandler)
    {
       this->isMessage = false;
       this->networkSocket = -1;
@@ -251,17 +250,16 @@ public:
 
 class InputHandler
 {
-   ConnectionsManager* manager;
-   CommandsHandler* handler;
+   shared_ptr<ConnectionsManager> manager;
+   shared_ptr<CommandsHandler> handler;
    string inputStr;
-   
    bool IsItCommand(string str)
    {
       return str[0] == '/';
    }  
 
 public:
-   InputHandler(ConnectionsManager* manager, CommandsHandler* handler)
+   InputHandler(shared_ptr<ConnectionsManager> manager, shared_ptr<CommandsHandler> handler)
    {
       this->manager = manager;
       this->handler = handler;           
@@ -269,6 +267,7 @@ public:
    
    void InputListener()
    {
+   
       while (!isExit) 
       {
          getline(cin, inputStr);
@@ -285,16 +284,39 @@ public:
       }
    }
 };
-//TODO структурировать в голове знания по поводу указателя и ссылки
+
+class Spamer
+{
+   shared_ptr<ConnectionsManager> manager;
+   thread spamer;
+   string inputStr = "DSADjhgkfdlspweoritkg,vc..,mvbgkrdls;sdlfkghmbv,cdldrkg,vcd;pdrkg,vc;dporfvikirfk";                       
+   void SpamerRoutine()
+   {
+      while(!isExit)
+      {
+         manager->IsMessageToSend(inputStr);
+         this_thread::sleep_for(chrono::milliseconds(1));
+      }
+   }
+public:
+   Spamer(shared_ptr<ConnectionsManager> manager)
+   {
+      this->manager = manager;
+      for (int i = 0; i < 0; i++)
+      {
+         inputStr += inputStr;
+      }
+      spamer = thread(&Spamer::SpamerRoutine, this);
+   }
+};
+
 int main (int argc, char* argv[])
 {
-   CommandsHandler* commandsHandler = new CommandsHandler();
-   ConnectionsManager* conManager = new ConnectionsManager(commandsHandler);
-   InputHandler* input = new InputHandler(conManager, commandsHandler);
+   shared_ptr<CommandsHandler> commandsHandler(new CommandsHandler());
+   shared_ptr<ConnectionsManager> conManager(new ConnectionsManager(commandsHandler));
+   unique_ptr<InputHandler> input(new InputHandler(conManager, commandsHandler));
+   unique_ptr<Spamer> spamer(new Spamer(conManager));
    input->InputListener();
-
-   delete conManager;
-   delete commandsHandler;
-   delete input;
+   
    return 0;
 }
